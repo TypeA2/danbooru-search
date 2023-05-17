@@ -1,2 +1,8 @@
 danbooru/*
 !danbooru/.gitkeep
+*.exe
+*.obj
+*.out
+
+main.c
+search

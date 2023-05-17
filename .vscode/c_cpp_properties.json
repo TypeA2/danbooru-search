@@ -10,6 +10,18 @@
                 "UNICODE",
                 "_UNICODE"
             ]
+        },
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${vcpkgRoot}/x64-linux/include"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/g++",
+            "cStandard": "c23",
+            "cppStandard": "gnu++23",
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4

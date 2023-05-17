@@ -23,14 +23,16 @@ posts = np.load(tags_posts)
 index = np.load(index_file)
 
 tags = [470575, 212816, 13197, 29, 1283444]
-
+#tags = [1574450, 1665885] # t-doll_contract girls'_frontline
 sets = [set() for _ in tags]
 
 start_time = time.time()
 j = 0
 for tag in tags:
     start = index[2 * tag]
-    end = index[(2 * tag) + 1]
+    end = index[(2 * tag) + 1] + 1
+
+    print(f" for {tag}: start={start} (idx={2*tag}), end={end} (idx={(2*tag)+1})")
 
     for i in range(start, end):
         sets[j].add(posts[i])
@@ -44,5 +46,7 @@ end_time = time.time()
 
 for i in range(len(sets)):
     print(f"{tags[i]}: {len(sets[i])}")
+
+print(f"Results: {len(result)}")
 print(sorted(list(result)))
 print(f"Took {round(end_time - start_time, 3)} seconds")

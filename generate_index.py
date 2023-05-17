@@ -67,10 +67,12 @@ for tag_name, data in tqdm(tag_dict.items()):
     # Insert all post ids for tag_id
     tag_index[2 * data[0]] = cur
     cur += data[1]
-    tag_index[(2 * data[0]) + 1] = cur
+    tag_index[(2 * data[0]) + 1] = (cur - 1)
 
 # Insert post IDs
+prev_id = 0
 for post_id, tags in tqdm(post_list):
+    prev_id = post_id
     for tag in tags:
         data = tag_dict[tag]
 
