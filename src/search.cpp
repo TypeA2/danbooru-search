@@ -8,6 +8,8 @@
 #include <chrono>
 #include <iomanip>
 #include <algorithm>
+#include <set>
+#include <optional>
 
 namespace fs = std::filesystem;
 
@@ -146,7 +148,7 @@ std::vector<int32_t> search(std::span<int32_t> tags, std::span<search_term> sear
     }
 }
 
-static void search_helper(std::span<int32_t> index, std::span<int32_t> tags, std::span<int32_t> search_ids) {
+static void search_helper(std::span<int32_t> index, std::span<int32_t> tags, std::span<int32_t> search_ids, std::optional<std::span<int32_t>> expected = {}) {
     std::vector<search_term> search_terms(search_ids.size());
     auto it = search_terms.begin();
 
@@ -164,7 +166,7 @@ static void search_helper(std::span<int32_t> index, std::span<int32_t> tags, std
 
     std::cerr << '\n';
 
-    static constexpr size_t repeats = 1000;
+    static constexpr size_t repeats = 50;
     
     std::vector<int32_t> results;
 
@@ -178,20 +180,45 @@ static void search_helper(std::span<int32_t> index, std::span<int32_t> tags, std
     auto elapsed = end - start;
     std::cerr << "Found " << results.size() << " results in "
               << std::setprecision(6) << std::fixed << (elapsed.count() / 1e9 / repeats) << " seconds average ("
-              << (elapsed.count() / 1e9) << " seconds total for " << repeats << " iterations)"
-              << (results.empty() ? "" : ":") << '\n';
+              << (elapsed.count() / 1e9) << " seconds total for " << repeats << " iterations)\n";
+
+    if (!expected.has_value()) {
+        std::cerr << '\n';
+        return;
+    }
 
     std::ranges::sort(results);
 
-    if (!results.empty()) {
-        for (size_t i = 0; i < (results.size() - 1); ++i) {
-            std::cerr << results[i] << ", ";
+    std::set<int32_t> actual_set { results.begin(), results.end() };
+    std::set<int32_t> expected_set { expected.value().begin(), expected.value().end() };
+
+    if (actual_set != expected_set) {
+        std::cerr << "  Results do not match expected results:\n";
+
+        std::set<int32_t> extra_actual;
+        std::set_difference(actual_set.begin(), actual_set.end(), expected_set.begin(), expected_set.end(), std::inserter(extra_actual, extra_actual.begin()));
+        if (!extra_actual.empty()) {
+            std::cerr << "    Additional found posts:\n";
+            for (int32_t v : extra_actual) {
+                std::cerr << "     - " << v << '\n';
+            }
+            std::cerr << '\n';
         }
 
-        std::cerr << results.back() << '\n';
+        std::set<int32_t> missing_actual;
+        std::set_difference(expected_set.begin(), expected_set.end(), actual_set.begin(), actual_set.end(), std::inserter(missing_actual, missing_actual.begin()));
+
+        if (!missing_actual.empty()) {
+            std::cerr << "    Missing posts:\n";
+            for (int32_t v : missing_actual) {
+                std::cerr << "     - " << v << '\n';
+            }
+        }
+    } else {
+        std::cerr << "  Results match expected results\n";
     }
 
-    std::cerr << "\n\n";
+    std::cerr << '\n';
 }
 
 int main(int argc, char** argv) {
@@ -230,7 +257,14 @@ int main(int argc, char** argv) {
             470575, 212816, 13197, 29, 1283444, // 1girl solo long_hair touhou fate/grand_order
         };
 
-        search_helper(index, tags, search_ids);
+        std::array expected {
+            2380549, 2420287, 2423105, 2523394, 2646037,
+            2683860, 2705783, 2745868, 2746265, 2752461,
+            2905088, 2917346, 3114201, 4081318, 4718669,
+            5639802, 6055186
+        };
+
+        search_helper(index, tags, search_ids, expected);
     }
 
     if (false) {
