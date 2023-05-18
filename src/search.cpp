@@ -69,13 +69,13 @@ struct search_term {
     size_t start;
     size_t end;
     size_t cursor;
-    int32_t current;
+    //int32_t current;
 };
 
 std::vector<int32_t> search(std::span<int32_t> tags, std::span<search_term> search) {
     std::vector<int32_t> result;
 
-    int32_t current_target = search[0].current;
+    int32_t current_target = tags[search.front().cursor];
 
     for (;;) {
         /* Search for the next post that matches all terms */
@@ -87,25 +87,27 @@ std::vector<int32_t> search(std::span<int32_t> tags, std::span<search_term> sear
             size_t k = 0;
             for (search_term& term : search) {
                 /* Join is found between `term` and current search target*/
-                if (term.current == current_target) {
+                int32_t cur = tags[term.cursor];
+
+                if (cur == current_target) {
                     ++k;
                     continue;
                 }
 
                 /* Try to find join */
-                while (term.current > current_target) {
+                while (cur > current_target) {
                     if (term.cursor == term.start) {
                         /* End reached */
                         return result;
                     }
 
                     term.cursor -= 1;
-                    term.current = tags[term.cursor];
+                    cur = tags[term.cursor];
                 }
 
                 /* Join wasn't found, advance all to next */
-                if (term.current < current_target) {
-                    current_target = term.current;
+                if (cur < current_target) {
+                    current_target = cur;
 
                     for (size_t j = 0; j < k; ++j) {
                         if (search[j].cursor == search[j].start) {
@@ -114,7 +116,6 @@ std::vector<int32_t> search(std::span<int32_t> tags, std::span<search_term> sear
                         }
 
                         search[j].cursor -= 1;
-                        search[j].current = tags[search[j].cursor];
                     }
 
                     flag = true;
@@ -136,10 +137,10 @@ std::vector<int32_t> search(std::span<int32_t> tags, std::span<search_term> sear
             }
 
             term.cursor -= 1;
-            term.current = tags[term.cursor];
 
-            if (term.current < current_target) {
-                current_target = term.current;
+            int32_t cur = tags[term.cursor];
+            if (cur < current_target) {
+                current_target = cur;
             }
         }
     }
@@ -154,7 +155,7 @@ static void search_helper(std::span<int32_t> index, std::span<int32_t> tags, std
         it->start = index[tag_id * 2],
         it->end = index[(tag_id * 2) + 1],
         it->cursor = it->end;
-        it->current = tags[it->cursor];
+        //it->current = tags[it->cursor];
 
         std::cerr << "  tag " << tag_id << ": start=" << it->start << ", end=" << it->end << '\n';
 
@@ -163,7 +164,7 @@ static void search_helper(std::span<int32_t> index, std::span<int32_t> tags, std
 
     std::cerr << '\n';
 
-    static constexpr size_t repeats = 250;
+    static constexpr size_t repeats = 1000;
     
     std::vector<int32_t> results;
 
@@ -189,6 +190,8 @@ static void search_helper(std::span<int32_t> index, std::span<int32_t> tags, std
 
         std::cerr << results.back() << '\n';
     }
+
+    std::cerr << "\n\n";
 }
 
 int main(int argc, char** argv) {
@@ -221,7 +224,7 @@ int main(int argc, char** argv) {
     std::cerr << "Loaded " << (index.size() / 2) << " tags and "
               << tags.size() << " post IDs in "
               << std::setprecision(6) << std::fixed << (load_elapsed.count() / 1e9) << " seconds\n\n";
-
+    
     {
         std::array search_ids {
             470575, 212816, 13197, 29, 1283444, // 1girl solo long_hair touhou fate/grand_order
@@ -230,7 +233,7 @@ int main(int argc, char** argv) {
         search_helper(index, tags, search_ids);
     }
 
-    {
+    if (false) {
         std::array search_ids {
             1574450, 1665885, // t-doll_contract girls'_frontline
         };

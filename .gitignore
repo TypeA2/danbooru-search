@@ -4,5 +4,5 @@ danbooru/*
 *.obj
 *.out
 
-main.c
-search
+ref/
+build/
