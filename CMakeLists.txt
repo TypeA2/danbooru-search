@@ -20,4 +20,27 @@ set_target_properties(search PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
+add_executable(parse
+    "src/parse.cpp"
+)
+
+set_target_properties(parse PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    INTERPROCEDURAL_OPTIMIZATION ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+find_package(simdjson CONFIG REQUIRED)
+target_link_libraries(parse PRIVATE simdjson::simdjson)
+
+if (MSVC)
+    target_compile_options(search PRIVATE /W3 /arch:avx2)
+    target_compile_options(parse PRIVATE /W3 /arch:avx2)
+else()
+    target_compile_options(search PRIVATE -Wall -Wextra -pedantic -march=native)
+    target_compile_options(parse PRIVATE -Wall -Wextra -pedantic -march=native)
+endif()
+
 target_include_directories(search PRIVATE "include")
+target_include_directories(parse PRIVATE "include")

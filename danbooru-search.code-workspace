@@ -60,7 +60,16 @@
 			"sstream": "cpp",
 			"streambuf": "cpp",
 			"typeinfo": "cpp",
-			"set": "cpp"
+			"set": "cpp",
+			"optional": "cpp",
+			"ranges": "cpp",
+			"cstring": "cpp",
+			"cinttypes": "cpp",
+			"condition_variable": "cpp",
+			"mutex": "cpp",
+			"semaphore": "cpp",
+			"stop_token": "cpp",
+			"thread": "cpp"
 		}
 	}
 }
