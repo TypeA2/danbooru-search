@@ -11,6 +11,7 @@ project(danbooru-search VERSION 1.0.0)
 
 add_executable(search
     "src/search.cpp"
+    "include/helper.hpp"
 )
 
 set_target_properties(search PROPERTIES
@@ -22,6 +23,7 @@ set_target_properties(search PROPERTIES
 
 add_executable(parse
     "src/parse.cpp"
+    "include/helper.hpp"
 )
 
 set_target_properties(parse PROPERTIES
