@@ -37,6 +37,9 @@ static index_t load_index(const fs::path& path) {
 
     size_t total_posts = 0;
 
+    uint32_t max_post = 0;
+    infile.read(reinterpret_cast<char*>(&max_post), sizeof(max_post));
+
     uint32_t tag_count = 0;
     infile.read(reinterpret_cast<char*>(&tag_count), sizeof(tag_count));
 
@@ -62,7 +65,7 @@ static index_t load_index(const fs::path& path) {
 
     const size_t total_bytes = 4 + 4 + (tag_count * sizeof(uint32_t)) + (total_posts * sizeof(uint32_t));
 
-    std::cerr << "Read " << tag_count << " tags, " << total_posts << " posts, "
+    std::cerr << "Read " << tag_count << " tags, " << total_posts << " posts (up to ID " << max_post << "), "
         << get_bytes(total_bytes) << " in " << get_time(elapsed) << " (" << get_bytes(total_bytes / (elapsed.count() / 1e9)) << "/s)\n";
 
     return result;
@@ -210,7 +213,7 @@ int main(int argc, char** argv) {
         search_helper(index, search_ids, expected);
     }
 
-    if (false) {
+    {
         std::array<uint32_t, 2> search_ids {
             1574450, 1665885, // t-doll_contract girls'_frontline
         };

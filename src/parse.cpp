@@ -90,7 +90,7 @@ tag_map_t read_tags(simdjson::ondemand::parser& parser, const fs::path& tags_jso
     return tags;
 }
 
-void read_posts(simdjson::ondemand::parser& parser, const fs::path& posts_json,
+uint32_t read_posts(simdjson::ondemand::parser& parser, const fs::path& posts_json,
                 tag_map_t& tags) {
 
     std::ifstream posts_file { posts_json };
@@ -105,6 +105,7 @@ void read_posts(simdjson::ondemand::parser& parser, const fs::path& posts_json,
 
     size_t post_bytes_read = 0;
     size_t posts_read = 0;
+    uint32_t max_post = 0;
     progress_bar progress("Reading posts", post_count);
     for (std::string line; std::getline(posts_file, line);) {
         post_bytes_read += line.size();
@@ -113,6 +114,11 @@ void read_posts(simdjson::ondemand::parser& parser, const fs::path& posts_json,
         auto doc = parser.iterate(padded);
 
         uint32_t id = doc["id"].get_uint64();
+
+        if (id > max_post) {
+            max_post = id;
+        }
+
         std::string_view tag_string = doc["tag_string"].get_string();
 
         for (const auto tag_subrange : std::views::split(tag_string, ' ')) {
@@ -137,6 +143,8 @@ void read_posts(simdjson::ondemand::parser& parser, const fs::path& posts_json,
 
     std::cerr << "Read " << posts_read << " posts in " << get_time (post_read_elapsed) << " ("
               << get_bytes(post_bytes_read / (post_read_elapsed.count() / 1e9)) << "/s)\n";
+
+    return max_post;
 }
 
 template <std::integral T>
@@ -186,7 +194,7 @@ int main(int argc, char** argv) {
     simdjson::ondemand::parser parser;
 
     tag_map_t tag_map = read_tags(parser, tags_json);
-    read_posts(parser, posts_json, tag_map);
+    uint32_t max_post = read_posts(parser, posts_json, tag_map);
 
     /* Re-shape tag map since we don't need tag names anymore */
     tag_id_map_t id_map;
@@ -205,13 +213,16 @@ int main(int argc, char** argv) {
 
     progress_bar progress("Writing index", max_tag);
 
-    size_t bytes_written = 4 + 4;
+    size_t bytes_written = 4 + 4 + 4;
     size_t posts_written = 0;
 
     /* Magic number */
     outfile.write("Awoo", 4);
 
     /* All 32-bit ints */
+    
+    /* Highest post numer */
+    outfile << binary<uint32_t>(max_post);
 
     /* Tag count is the highest tag number */
     outfile << binary<uint32_t>(max_tag);

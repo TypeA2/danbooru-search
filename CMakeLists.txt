@@ -21,6 +21,19 @@ set_target_properties(search PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
+add_executable(mask_search
+    "src/mask_search.cpp"
+    "include/helper.hpp"
+)
+
+set_target_properties(mask_search PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    INTERPROCEDURAL_OPTIMIZATION ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+
 add_executable(parse
     "src/parse.cpp"
     "include/helper.hpp"
@@ -38,11 +51,14 @@ target_link_libraries(parse PRIVATE simdjson::simdjson)
 
 if (MSVC)
     target_compile_options(search PRIVATE /W3 /arch:avx2)
+    target_compile_options(mask_search PRIVATE /W3 /arch:avx2)
     target_compile_options(parse PRIVATE /W3 /arch:avx2)
 else()
     target_compile_options(search PRIVATE -Wall -Wextra -pedantic -march=native)
+    target_compile_options(mask_search PRIVATE -Wall -Wextra -pedantic -march=native)
     target_compile_options(parse PRIVATE -Wall -Wextra -pedantic -march=native)
 endif()
 
 target_include_directories(search PRIVATE "include")
+target_include_directories(mask_search PRIVATE "include")
 target_include_directories(parse PRIVATE "include")
