@@ -24,7 +24,7 @@ namespace fs = std::filesystem;
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
 
-using mask_val_t = uint64_t;
+using mask_val_t = __uint128_t;
 static constexpr size_t MASK_SIZE = sizeof(mask_val_t) * CHAR_BIT;
 
 struct mask_desc {
@@ -284,7 +284,7 @@ std::vector<uint32_t> search(index_t& index, std::vector<uint32_t> search_ids) {
 }
 
 static void search_helper(index_t& index, std::span<uint32_t> search_ids, std::optional<std::span<uint32_t>> expected = {}) {
-    static constexpr size_t repeats = 10'000;
+    static constexpr size_t repeats = 1'000;
     
     std::vector<uint32_t> results;
     auto start = std::chrono::steady_clock::now();
