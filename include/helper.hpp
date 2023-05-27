@@ -51,6 +51,7 @@ std::string get_time(std::chrono::nanoseconds ns) {
 
 class progress_bar {
     std::string_view _prompt;
+    std::ostream& _os;
     const uint64_t _max;
     const double _maxf;
     const uint64_t _step;
@@ -59,8 +60,9 @@ class progress_bar {
     uint64_t _last_update = 0;
 
     public:
-    progress_bar(std::string_view prompt, uint64_t max)
+    progress_bar(std::string_view prompt, uint64_t max, std::ostream& os = std::cout)
         : _prompt { prompt }
+        , _os { os }
         , _max { max }
         , _maxf { static_cast<double>(max) }
         , _step { _max / 1000 } {
@@ -72,13 +74,34 @@ class progress_bar {
 
         if ((_cur - _last_update) > _step) {
             double percent = 100. * (_cur / _maxf);
-            std::cout << '\r' << _prompt << ": " << std::setprecision(1) << std::fixed << percent << " %" << std::flush;
+            _os << '\r' << _prompt << ": " << std::setprecision(1) << std::fixed << percent << " %" << std::flush;
             _last_update = _cur;
         }
     }
 
     void finish() const {
-        std::cout << '\r' << _prompt << ": 100.0 %\n";
+        _os << '\r' << _prompt << ": 100.0 %\n";
+    }
+};
+
+class counter {
+    std::string_view _prompt;
+    std::ostream& _os;
+    const uint64_t _max;
+    
+    uint64_t _cur = 0;
+
+    public:
+    counter(std::string_view prompt, uint64_t max, std::ostream& os = std::cout)
+        : _prompt { prompt }, _os { os }, _max { max } { }
+
+    void advance(uint64_t n = 1) {
+        _cur += n;
+        _os << '\r' << _prompt << ": " << _cur << " / " << _max << std::flush;
+    }
+
+    void finish() const {
+        _os << '\r' << _prompt << ": " << _max << " / " << _max << '\n';
     }
 };
 

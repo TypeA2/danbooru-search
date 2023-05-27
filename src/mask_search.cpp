@@ -15,8 +15,16 @@
 #include <variant>
 #include <unordered_map>
 #include <ranges>
+#include <compare>
+#include <bitset>
+#include <immintrin.h>
 
 #include "helper.hpp"
+#include "simd.hpp"
+#include "avx_buffer.hpp"
+
+using namespace simd::epi32_operators;
+namespace epi32 = simd::epi32;
 
 namespace fs = std::filesystem;
 
@@ -29,13 +37,13 @@ static constexpr size_t MASK_SIZE = sizeof(mask_val_t) * CHAR_BIT;
 
 struct mask_desc {
     uint32_t post_count;
-    std::vector<mask_val_t> mask;
+    avx_buffer<mask_val_t> mask;
 
     mask_desc() = default;
     mask_desc(mask_desc&&) noexcept = default;
     mask_desc(const mask_desc&) = delete;
     mask_desc(uint32_t post_count, size_t mask_count)
-        : post_count { post_count }, mask(mask_count, 0) { }
+        : post_count { post_count }, mask(avx_buffer<mask_val_t>::zero(mask_count)) { }
 
     mask_desc& operator=(mask_desc&&) noexcept = default;
     mask_desc& operator=(const mask_desc&) = default;
@@ -44,6 +52,12 @@ struct mask_desc {
     const mask_val_t& operator[](size_t idx) const { return mask[idx]; }
 };
 using index_value_t = std::variant<std::monostate, std::vector<uint32_t>, mask_desc>;
+
+static overloaded sort_visitor {
+    [](std::monostate) -> size_t { return 0; },
+    [](const std::vector<uint32_t>& ids) -> size_t { return ids.size(); },
+    [](const mask_desc& mask) -> size_t { return mask.post_count; }
+};
 
 struct post_index {
     uint32_t max_post;
@@ -56,6 +70,24 @@ struct post_index {
 };
 
 using index_t = post_index;
+
+static constexpr size_t repeats = 1'000;
+
+struct timekeeping {
+    using duration = std::chrono::steady_clock::duration;
+    duration sort;
+    duration initialize;
+    duration mask;
+    duration result;
+
+    duration avg_sort() const { return sort / repeats; }
+    duration avg_initialize() const { return initialize / repeats; }
+    duration avg_mask() const { return mask / repeats; }
+    duration avg_result() const { return result / repeats; }
+
+    duration total() const { return sort + initialize + mask + result; }
+    duration avg_total() const { return total() / repeats; }
+};
 
 /* Minimum number of posts before we use a tag instead */
 static constexpr size_t MASK_THRESHOLD = 50'000;
@@ -88,11 +120,12 @@ static index_t load_index(const fs::path& path) {
 
     result.data.resize(tag_count);
 
-    size_t mask_tags = 0;
-
     std::unordered_map<uint32_t, uint32_t> mask_sizes;
 
     size_t index_bytes = 0;
+
+    size_t masks = 0;
+    size_t id_lists = 0;
 
     progress_bar p0 { "Reading tags", result.size() };
     for (uint32_t i = 0; i < result.size(); ++i) {
@@ -108,9 +141,13 @@ static index_t load_index(const fs::path& path) {
 
             index_bytes += sizeof(mask_val_t)* result.mask_size();
             mask_sizes.insert({ i, post_count });
+
+            ++masks;
         } else {
             result[i] = std::vector<uint32_t>(post_count, 0);
             index_bytes += post_count * sizeof(uint32_t);
+
+            ++id_lists;
         }
 
         total_posts += post_count;
@@ -137,8 +174,6 @@ static index_t load_index(const fs::path& path) {
             [&](mask_desc& mask) {
                 /* Read in the usual 4KiB chunks */
                 ssize_t posts_remaining = mask_sizes.at(i);
-
-                mask_tags += 1;
 
                 while (posts_remaining > 0) {
                     std::array<uint32_t, 4096/sizeof(uint32_t)> buf;
@@ -167,11 +202,12 @@ static index_t load_index(const fs::path& path) {
 
     const size_t total_bytes = 4 + 4 + (tag_count * sizeof(uint32_t)) + (total_posts * sizeof(uint32_t));
 
-    std::cerr << "Read " << (tag_count - mask_tags) << " tags, "
-        << mask_tags << " masked tags, "
-        << total_posts << " posts (up to ID " << result.max_post << "), "
-        << get_bytes(index_bytes) << " total memory, "
-        << get_bytes(total_bytes) << " in " << get_time(elapsed) << " (" << get_bytes(total_bytes / (elapsed.count() / 1e9)) << "/s)\n";
+    std::cerr << "Read " << tag_count << " tags, "
+        << total_posts << " posts (up to ID " << result.max_post << ")\n"
+        << "  " << (tag_count - id_lists - masks) << " empty tags, " << id_lists << " ID lists, " << masks << " mask arrays ("
+        << get_bytes(sizeof(mask_val_t) * result.mask_size()) << " per mask)\n"
+        << "  " << get_bytes(index_bytes) << " total memory, "
+        << get_bytes(total_bytes) << " in " << get_time(elapsed) << " (" << get_bytes(total_bytes / (elapsed.count() / 1e9)) << "/s)\n\n";
 
     return result;
 }
@@ -182,27 +218,21 @@ static void usage(const char* argv0) {
 
 }
 
-std::vector<uint32_t> search(index_t& index, std::vector<uint32_t> search_ids) {
+std::vector<uint32_t> search(timekeeping& trace, index_t& index, std::vector<uint32_t> search_ids) {
+    auto a = std::chrono::steady_clock::now();
     std::ranges::sort(search_ids, [&index](uint32_t lhs, uint32_t rhs) {
-        static overloaded visitor {
-            [](std::monostate) -> size_t { return 0; },
-            [](const std::vector<uint32_t>& ids) -> size_t { return ids.size(); },
-
-            /* May not represent the exact size, but since we always process MASK_SIZE
-             * bits this is irrelevant
-             */
-            [](const mask_desc& mask) -> size_t { return mask.post_count; }
-        };
-
-        size_t lhs_size = std::visit(visitor, index.at(lhs));
-        size_t rhs_size = std::visit(visitor, index.at(rhs));
+        size_t lhs_size = std::visit(sort_visitor, index.at(lhs));
+        size_t rhs_size = std::visit(sort_visitor, index.at(rhs));
 
         return lhs_size < rhs_size;
     });
 
-    std::vector<mask_val_t> result_mask(index.mask_size(), 0);
+    auto b = std::chrono::steady_clock::now();
 
-    std::visit(overloaded {
+    //std::vector<mask_val_t> result_mask(index.mask_size(), 0);
+    auto result_mask = avx_buffer<mask_val_t>::zero(index.mask_size());
+#if 0
+    overloaded initialize_visitor {
         [](std::monostate) { },
 
         [&result_mask](const std::vector<uint32_t>& ids) {
@@ -218,7 +248,85 @@ std::vector<uint32_t> search(index_t& index, std::vector<uint32_t> search_ids) {
             std::ranges::copy(mask.mask, result_mask.data());
         },
 
-    }, index.at(search_ids.front()));
+    };
+
+    std::visit(initialize_visitor, index.at(search_ids.front()));
+    
+    static constexpr size_t drop_count = 1;
+    
+#else
+
+    /* Separately combine the first two */
+    overloaded first_tag_visitor {
+        [](std::monostate, std::monostate) { },
+        [](std::monostate, const std::vector<uint32_t>&) { },
+        [](std::monostate, const mask_desc&) { },
+        [](const std::vector<uint32_t>&, std::monostate) { },
+        [](const mask_desc&, std::monostate) { },
+
+        [&result_mask](const std::vector<uint32_t>& lhs, const std::vector<uint32_t>& rhs) {
+            auto left_it = lhs.begin();
+            auto right_it = rhs.begin();
+
+            while (left_it != lhs.end() && right_it != rhs.end()) {
+                auto order = *left_it <=> *right_it;
+
+                if (order == std::strong_ordering::less) {
+                    ++left_it;
+                } else if (order == std::strong_ordering::greater) {
+                    ++right_it;
+                } else {
+                    uint32_t index = *left_it++ / MASK_SIZE;
+                    uint32_t offset = *right_it++ % MASK_SIZE;
+
+                    result_mask[index] |= mask_val_t{1} << offset;
+                }
+            }
+        },
+
+        [&result_mask](const std::vector<uint32_t>& lhs, const mask_desc& rhs) {
+            for (uint32_t id : lhs) {
+                uint32_t index = id / MASK_SIZE;
+                uint32_t offset = id % MASK_SIZE;
+
+                auto mask = mask_val_t{1} << offset;
+                result_mask[index] |= mask & rhs[index];
+            }
+        },
+
+        [&result_mask](const mask_desc& lhs, const std::vector<uint32_t>& rhs) {
+            for (uint32_t id : rhs) {
+                uint32_t index = id / MASK_SIZE;
+                uint32_t offset = id % MASK_SIZE;
+
+                auto mask = mask_val_t{1} << offset;
+                result_mask[index] |= mask & lhs[index];
+            }
+        },
+
+        [&result_mask](const mask_desc& lhs, const mask_desc& rhs) {
+            for (size_t i = 0; i < result_mask.size_m256i(); ++i) {
+                //result_mask[i] = lhs[i] & rhs[i];
+                //mask_val_t res = lhs[i] & rhs[i];
+                //if (res) {
+                //    result_mask[i] = res;
+                //}
+                m256i l = _mm256_load_si256(lhs.mask.m256i(i));
+                m256i r = _mm256_load_si256(rhs.mask.m256i(i));
+
+                m256i result = l & r;
+                _mm256_store_si256(result_mask.m256i(i), result);
+            }
+        },
+    };
+
+    std::visit(first_tag_visitor, index.at(search_ids[0]), index.at(search_ids[1]));
+
+    static constexpr size_t drop_count = 2;
+
+#endif
+
+    auto c = std::chrono::steady_clock::now();
 
     /* Effectively bitwise AND on the result_mask */
     overloaded visitor {
@@ -237,34 +345,53 @@ std::vector<uint32_t> search(index_t& index, std::vector<uint32_t> search_ids) {
         },
 
         [&result_mask](const mask_desc& mask) {
-            for (size_t i = 0; i < result_mask.size(); ++i) {
-                mask_val_t& current = result_mask[i];
-                if (current) {
-                    current &= mask[i];
+            for (size_t i = 0; i < result_mask.size_m256i(); ++i) {
+                m256i next = _mm256_load_si256(mask.mask.m256i(i));
+
+                if (!epi32::is_zero(next)) {
+                    m256i cur = _mm256_load_si256(result_mask.m256i(i));
+
+                    m256i result = cur & next;
+
+                    epi32::store(result_mask.m256i(i), result);
                 }
             }
+            //for (size_t i = 0; i < result_mask.size(); ++i) {
+                //mask_val_t& current = result_mask[i];
+                //if (current) {
+                    //current &= mask[i];
+                //}
+            //}
         },
     };
 
-    for (uint32_t id : search_ids | std::views::drop(1)) {
-        /* TODO early exit when nothing is found */
-        std::visit(visitor, index.at(id));
+#define DROP_END 1
+
+    for (size_t i = drop_count; i < (search_ids.size() - DROP_END); ++i) {
+        std::visit(visitor, index.at(search_ids[i]));
     }
+
+    auto d = std::chrono::steady_clock::now();
 
     std::vector<uint32_t> results;
 
+#if DROP_END == 0
     uint32_t idx = 0;
     for (mask_val_t mask : result_mask) {
 
 #if 0
-        while (mask) {
-            int trailing = __builtin_ctzll(mask);
 
-            results.push_back(idx + trailing);
-            mask &= ~(mask_val_t{1} << trailing);
+        for (size_t i = 0; i < (MASK_SIZE / 64); ++i) {
+            uint64_t submask = (mask >> (i * 64)) & 0xFFFFFFFFFFFFFFFFull;
+            while (submask) {
+                int trailing = __builtin_ctzll(submask);
+
+                results.push_back(idx + trailing);
+                submask &= ~(uint64_t{1} << trailing);
+            }
+
+            idx += 64;
         }
-
-        idx += MASK_SIZE;
 
 #else
 
@@ -279,24 +406,83 @@ std::vector<uint32_t> search(index_t& index, std::vector<uint32_t> search_ids) {
         }
 #endif
     }
+#else
+
+    /* Perform last merge and result writing directly */
+    overloaded final_visitor {
+        [](std::monostate) { },
+
+        [&results, &result_mask](const std::vector<uint32_t>& ids) {
+            for (uint32_t id : ids) {
+                uint32_t index = id / MASK_SIZE;
+                uint32_t offset = id % MASK_SIZE;
+
+                if (result_mask[index] & (mask_val_t{1} << offset)) {
+                    results.push_back(id);
+                }
+            }
+        },
+
+        [&results, &result_mask](const mask_desc& masks) {
+            for (size_t i = 0; i < result_mask.size(); ++i) {
+                if (mask_val_t val = masks[i]; val) {
+                    if (mask_val_t masked = result_mask[i] & val; masked) {
+                        for (uint32_t j = 0; j < MASK_SIZE; ++j) {
+                            if (masked & (mask_val_t{1} << j)) {
+                                results.push_back((i * MASK_SIZE) + j);
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    };
+
+    std::visit(final_visitor, index.at(search_ids.back()));
+
+#endif
+    auto e = std::chrono::steady_clock::now();
+
+    trace.sort += (b - a);
+    trace.initialize += (c - b);
+    trace.mask += (d - c);
+    trace.result += (e - d);
 
     return results;
 }
 
 static void search_helper(index_t& index, std::span<uint32_t> search_ids, std::optional<std::span<uint32_t>> expected = {}) {
-    static constexpr size_t repeats = 1'000;
+    std::vector<uint32_t> sorted_search_ids { search_ids.begin(), search_ids.end() };
+    std::ranges::sort(sorted_search_ids);
+
+    for (uint32_t id : sorted_search_ids) {
+        std::cerr << "Tag " << id << " -> ";
+
+        switch (index.at(id).index()) {
+            case 0: std::cerr << "unknown\n"; break;
+            case 1: std::cerr << "ID list\n"; break;
+            case 2: std::cerr << "Bitmask\n";  break;
+        }
+    }
+
+    std::cerr << '\n';
     
     std::vector<uint32_t> results;
-    auto start = std::chrono::steady_clock::now();
-    for (size_t i = 0; i < repeats; ++i) {
-        results = search(index, { search_ids.begin(), search_ids.end() });
-    }
-    auto end = std::chrono::steady_clock::now();
 
-    auto elapsed = end - start;
+    timekeeping trace{};
+    for (size_t i = 0; i < repeats; ++i) {
+        results = search(trace, index, { search_ids.begin(), search_ids.end() });
+    }
+
     std::cerr << "Found " << results.size() << " results in "
-              << get_time(elapsed / repeats) << " average ("
-              << get_time(elapsed) << " total for " << repeats << " iterations)\n";
+              << get_time(trace.avg_total()) << " average ("
+              << get_time(trace.total()) << " total for " << repeats << " iterations)\n";
+
+    std::cerr << "  Sort:         " << get_time(trace.avg_sort()) << '\n'
+              << "  Initial mask: " << get_time(trace.avg_initialize()) << " ("
+              << get_bytes((index.mask_size() * sizeof(mask_val_t)) / (trace.avg_initialize().count() / 1e9)) << "/s)\n"
+              << "  Mask:         " << get_time(trace.avg_mask()) << '\n'
+              << "  Read result:  " << get_time(trace.avg_result()) << '\n';
 
     if (!expected.has_value()) {
         std::cerr << '\n';
